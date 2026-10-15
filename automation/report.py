@@ -31,6 +31,7 @@ def compare_books(current, previous):
     """What changed since the last run: new books, removed books, price changes."""
     if previous is None:
         return [_change("No previous run")]
+    current, previous = _same_pages(current, previous)
     old = {b["Link"]: b for b in previous}
     new = {b["Link"]: b for b in current}
     changes = []
@@ -43,6 +44,18 @@ def compare_books(current, previous):
         if link not in new:
             changes.append(_change("Removed", b, old_price=b["Price"]))
     return changes or [_change("No changes")]
+
+
+def _same_pages(current, previous):
+    """Keep only catalogue pages scraped in BOTH runs, so a run with fewer
+    pages (or a page that failed) is not reported as hundreds of removed books."""
+    pages_now = {b.get("Page") for b in current}
+    pages_before = {b.get("Page") for b in previous}
+    if None in pages_now or None in pages_before:  # older report without a Page column
+        return current, previous
+    common = pages_now & pages_before
+    return ([b for b in current if b["Page"] in common],
+            [b for b in previous if b["Page"] in common])
 
 
 def find_previous_report(output_dir, kind, exclude=None):

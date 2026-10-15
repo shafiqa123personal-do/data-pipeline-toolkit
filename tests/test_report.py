@@ -54,6 +54,28 @@ def test_compare_books_no_changes():
     assert compare_books(rows, rows)[0]["Change"] == "No changes"
 
 
+def on_page(row, page):
+    return {**row, "Page": page}
+
+
+def test_compare_books_ignores_pages_missing_this_run():
+    previous = [on_page(book("A", 10.0), 1), on_page(book("B", 20.0), 2)]
+    current = [on_page(book("A", 10.0), 1)]
+    assert compare_books(current, previous)[0]["Change"] == "No changes"
+
+
+def test_compare_books_extra_pages_not_reported_as_new():
+    previous = [on_page(book("A", 10.0), 1)]
+    current = [on_page(book("A", 10.0), 1), on_page(book("C", 5.0), 2)]
+    assert compare_books(current, previous)[0]["Change"] == "No changes"
+
+
+def test_compare_books_same_pages_still_detects_removed():
+    previous = [on_page(book("A", 10.0), 1), on_page(book("B", 20.0), 1)]
+    current = [on_page(book("A", 10.0), 1)]
+    assert compare_books(current, previous)[0]["Change"] == "Removed"
+
+
 def test_build_report_first_run(tmp_path):
     path = build_report("books", [book("A", 10.0)], tmp_path, now=datetime(2026, 10, 15, 9, 30))
     assert path.name == "books_report_2026-10-15_0930.xlsx"

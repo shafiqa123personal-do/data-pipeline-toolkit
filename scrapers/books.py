@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 
 PAGE_URL = "https://books.toscrape.com/catalogue/page-{}.html"
 MAX_PAGES = 50
+MAX_FAILS_IN_A_ROW = 3                             # connection is probably down - stop early
 
 
 def parse_list_page(html, page_url):
@@ -52,27 +53,42 @@ def scrape_books(pages, details=False, delay=1, fetch=get_page):
         raise ValueError(f"pages must be between 1 and {MAX_PAGES}")
 
     books = []
+    fails_in_a_row = 0
     for page in range(1, pages + 1):
         url = PAGE_URL.format(page)
         log.info("Page %d of %d", page, pages)
         html = fetch(url)
         if html is None:
             log.error("Skipping page %d - could not load it", page)
+            fails_in_a_row += 1
+            if fails_in_a_row >= MAX_FAILS_IN_A_ROW:
+                break
             continue
+        fails_in_a_row = 0
 
         page_books = parse_list_page(html, url)
+        for book in page_books:
+            book["Page"] = page                    # lets reports compare the same pages only
         if details:
             for book in page_books:
-                detail_html = fetch(book["Link"])
+                detail_html = fetch(book["Link"]) if fails_in_a_row < MAX_FAILS_IN_A_ROW else None
                 if detail_html is None:
                     log.error("No details for %s", book["Link"])
                     book.update({"Stock": None, "Category": "", "Description": ""})
+                    fails_in_a_row += 1
                 else:
                     book.update(parse_detail_page(detail_html))
+                    fails_in_a_row = 0
                 time.sleep(delay)
         books.extend(page_books)
+        if fails_in_a_row >= MAX_FAILS_IN_A_ROW:
+            break
         if page < pages:
             time.sleep(delay)                      # be polite between pages
+
+    if fails_in_a_row >= MAX_FAILS_IN_A_ROW:
+        log.error("Stopping early - %d downloads failed in a row, check your internet connection",
+                  fails_in_a_row)
 
     log.info("Scraped %d books", len(books))
     return books

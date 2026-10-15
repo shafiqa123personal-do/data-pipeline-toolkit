@@ -108,6 +108,38 @@ def test_scrape_books_details_failed_keeps_book():
     assert books[0]["Category"] == ""
 
 
+def test_scrape_books_records_page_number():
+    fetch = fake_fetch({
+        "https://books.toscrape.com/catalogue/page-1.html": LIST_HTML,
+        "https://books.toscrape.com/catalogue/page-2.html": LIST_HTML,
+    })
+    books = scrape_books(2, delay=0, fetch=fetch)
+    assert [b["Page"] for b in books] == [1, 1, 2, 2]
+
+
+def counting_fetch(pages, calls):
+    def _fetch(url):
+        calls.append(url)
+        return pages.get(url)
+    return _fetch
+
+
+def test_scrape_books_stops_after_3_failed_pages_in_a_row():
+    calls = []
+    books = scrape_books(50, delay=0, fetch=counting_fetch({}, calls))
+    assert books == []
+    assert len(calls) == 3
+
+
+def test_scrape_books_stops_after_3_failed_detail_pages_in_a_row():
+    calls = []
+    fetch = counting_fetch({"https://books.toscrape.com/catalogue/page-1.html": LIST_HTML * 2}, calls)
+    books = scrape_books(2, details=True, delay=0, fetch=fetch)
+    assert len(calls) == 4                     # list page + 3 failed detail pages, then stop
+    assert len(books) == 4                     # books from page 1 are kept, with blank details
+    assert all(b["Stock"] is None for b in books)
+
+
 @pytest.mark.parametrize("pages", [0, 51])
 def test_scrape_books_rejects_bad_page_count(pages):
     with pytest.raises(ValueError):

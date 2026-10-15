@@ -1,6 +1,6 @@
 """Turn scraped rows into a finished Excel report: Summary + data + Changes."""
 import logging
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -24,6 +24,21 @@ def summarize_books(books):
     categories = Counter(b["Category"] for b in books if b.get("Category"))
     for name, count in categories.most_common():
         summary.append({"Metric": f"Category: {name}", "Value": count})
+    return summary
+
+
+def summarize_invoices(invoices):
+    """Key numbers for the invoice Summary sheet."""
+    summary = [
+        {"Metric": "Invoices", "Value": len(invoices)},
+        {"Metric": "Need checking", "Value": sum(1 for i in invoices if i.get("Status") != "OK")},
+    ]
+    totals = defaultdict(float)
+    for i in invoices:
+        if isinstance(i.get("Total"), (int, float)):
+            totals[i.get("Currency") or "?"] += i["Total"]
+    for currency in sorted(totals):
+        summary.append({"Metric": f"Total {currency}", "Value": round(totals[currency], 2)})
     return summary
 
 

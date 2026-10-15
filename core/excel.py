@@ -1,4 +1,5 @@
 """Save lists of dicts to a nicely formatted Excel file, and read them back."""
+import os
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -35,9 +36,12 @@ def save_excel(sheets, path):
         ws.freeze_panes = "A2"                     # header stays visible when scrolling
         _fit_columns(ws)
 
-    try:
-        wb.save(path)
+    temp = path.with_name(path.name + ".tmp")      # write a copy first: a crash never
+    try:                                           # leaves a half-written report behind
+        wb.save(temp)
+        os.replace(temp, path)
     except PermissionError:
+        temp.unlink(missing_ok=True)
         raise PermissionError(
             f"Cannot save {path.name} - it is probably open in Excel. Close it and run again."
         ) from None

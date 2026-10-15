@@ -3,6 +3,7 @@ import pytest
 from automation import inbox
 from automation.inbox import process_inbox
 from automation.report import summarize_invoices
+from extractors.invoices import TemporaryError
 from core.excel import read_sheet
 
 
@@ -27,12 +28,12 @@ def folders(tmp_path):
 
 def add_files(folder, *names):
     for name in names:
-        (folder / name).write_bytes(b"%PDF-1.4")
+        (folder / name).write_bytes(b"%PDF-1.4 " + name.encode())    # different content per file
 
 
 def run(folders, extract=fake_extract):
     return process_inbox(folders["inbox"], folders["done"], folders["failed"], folders["master"],
-                         extract=extract, delay=0)
+                         extract=extract, delay=0, min_age=0)
 
 
 def test_processes_files_and_moves_them_to_done(folders):
@@ -103,3 +104,88 @@ def test_summarize_invoices():
     assert summary["Need checking"] == 1
     assert summary["Total GBP"] == 15.5
     assert summary["Total USD"] == 7.0
+
+
+def test_temporary_error_stops_and_keeps_rest_in_inbox(folders):
+    def extract(path):
+        if path.name == "b.pdf":
+            raise TemporaryError("Gemini unavailable (429)")
+        return fake_extract(path)
+
+    add_files(folders["inbox"], "a.pdf", "b.pdf", "c.pdf")
+    with pytest.raises(TemporaryError):
+        run(folders, extract=extract)
+    assert [r["File"] for r in read_sheet(folders["master"], "Invoices")] == ["a.pdf"]
+    assert sorted(p.name for p in folders["inbox"].iterdir()) == ["b.pdf", "c.pdf"]
+    assert not folders["failed"].exists() or list(folders["failed"].iterdir()) == []
+
+
+def test_new_files_wait_until_fully_copied(folders):
+    add_files(folders["inbox"], "a.pdf")
+    result = process_inbox(folders["inbox"], folders["done"], folders["failed"], folders["master"],
+                           extract=fake_extract, delay=0, min_age=60)
+    assert result == {"processed": 0, "failed": 0}
+    assert [p.name for p in folders["inbox"].iterdir()] == ["a.pdf"]
+
+
+def test_ignores_system_and_partial_files(folders):
+    add_files(folders["inbox"], "a.pdf", "desktop.ini", "Thumbs.db", "scan.pdf.crdownload")
+    assert run(folders) == {"processed": 1, "failed": 0}
+    assert sorted(p.name for p in folders["inbox"].iterdir()) == \
+        ["Thumbs.db", "desktop.ini", "scan.pdf.crdownload"]
+
+
+def test_same_invoice_is_not_extracted_twice(folders):
+    calls = []
+
+    def counting_extract(path):
+        calls.append(path.name)
+        return fake_extract(path)
+
+    (folders["inbox"] / "a.pdf").write_bytes(b"same invoice")
+    (folders["inbox"] / "a copy.pdf").write_bytes(b"same invoice")
+    run(folders, extract=counting_extract)
+    (folders["inbox"] / "a again.pdf").write_bytes(b"same invoice")
+    run(folders, extract=counting_extract)
+    assert calls == ["a copy.pdf"]
+    assert len(read_sheet(folders["master"], "Invoices")) == 1
+    assert list(folders["inbox"].iterdir()) == []
+
+
+def test_move_failure_after_save_does_not_duplicate(folders, monkeypatch):
+    real_move = inbox.shutil.move
+    attempts = []
+
+    def flaky_move(src, dst):
+        attempts.append(src)
+        if len(attempts) == 1:
+            raise PermissionError("file is open in a PDF viewer")
+        return real_move(src, dst)
+
+    monkeypatch.setattr(inbox.shutil, "move", flaky_move)
+    add_files(folders["inbox"], "a.pdf")
+    run(folders)                                   # saved to master, but the move fails
+    assert [p.name for p in folders["inbox"].iterdir()] == ["a.pdf"]
+    run(folders)                                   # next run: recognised, just moved
+    assert len(read_sheet(folders["master"], "Invoices")) == 1
+    assert [p.name for p in folders["done"].iterdir()] == ["a.pdf"]
+
+
+def test_locked_master_is_detected_before_extracting(folders, monkeypatch):
+    calls = []
+
+    def locked(path):
+        raise PermissionError("Cannot update invoices_master.xlsx - Close it and run again.")
+
+    monkeypatch.setattr(inbox, "_check_writable", locked)
+    add_files(folders["inbox"], "a.pdf")
+    with pytest.raises(PermissionError):
+        run(folders, extract=lambda path: calls.append(path) or fake_extract(path))
+    assert calls == []
+
+
+def test_master_summary_warns_it_is_rebuilt(folders):
+    add_files(folders["inbox"], "a.pdf")
+    run(folders)
+    notes = [r["Value"] for r in read_sheet(folders["master"], "Summary") if r["Metric"] == "Note"]
+    assert notes and "copy it before editing" in notes[0]

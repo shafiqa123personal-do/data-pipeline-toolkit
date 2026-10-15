@@ -15,6 +15,7 @@ from automation.inbox import process_inbox
 from automation.notify import send_report
 from automation.report import build_report
 from core.log import setup_logging
+from extractors.invoices import TemporaryError
 from scrapers.books import MAX_PAGES, scrape_books
 from scrapers.emails import add_emails
 from scrapers.gmaps import scrape_gmaps
@@ -116,6 +117,9 @@ def main(argv=None, output_dir=None, log_dir=None):
             send_report(report, f"{args.job.title()} report - {report.name}")
     except PermissionError as error:               # report open in Excel
         log.error("%s", error)
+        code = 1
+    except TemporaryError as error:                # Gemini offline / quota - retry next run
+        log.error("%s - unprocessed invoices stay in the inbox for the next run.", error)
         code = 1
     except Exception:
         log.exception("Job failed")

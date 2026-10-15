@@ -122,3 +122,16 @@ def test_no_email_without_flag(tmp_path, monkeypatch):
     monkeypatch.setattr(run, "send_report", lambda path, subject: sent.append(path))
     run.main(["books", "--pages", "1"], output_dir=tmp_path / "out", log_dir=tmp_path / "logs")
     assert sent == []
+
+
+def test_invoices_temporary_error_exit_1(tmp_path, monkeypatch):
+    from extractors.invoices import TemporaryError
+
+    def outage(*args, **kwargs):
+        raise TemporaryError("Cannot reach Gemini")
+
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(run, "process_inbox", outage)
+    code = run.main(["invoices", "--folder", str(tmp_path / "inbox")], output_dir=tmp_path,
+                    log_dir=tmp_path)
+    assert code == 1

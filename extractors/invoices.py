@@ -2,13 +2,23 @@
 import logging
 from pathlib import Path
 
+import httpx                                       # installed with google-genai
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from pydantic import BaseModel
 
 import config
 
 log = logging.getLogger(__name__)
+
+
+class TemporaryError(Exception):
+    """Gemini can't be used right now (offline, quota, outage, bad key) - not the file's fault."""
+
+
+def is_temporary(code):
+    """HTTP codes that mean 'try again later' rather than 'this file is bad'."""
+    return code in (401, 403, 408, 429) or code >= 500
 
 FILE_TYPES = {".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
               ".png": "image/png", ".webp": "image/webp", ".heic": "image/heic"}
@@ -54,12 +64,19 @@ def read_invoice(path):
     path = Path(path)
     file_part = types.Part.from_bytes(data=path.read_bytes(), mime_type=FILE_TYPES[path.suffix.lower()])
     client = genai.Client(api_key=config.GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model=config.GEMINI_MODEL,
-        contents=[file_part, PROMPT],
-        config=types.GenerateContentConfig(response_mime_type="application/json",
-                                           response_schema=Invoice),
-    )
+    try:
+        response = client.models.generate_content(
+            model=config.GEMINI_MODEL,
+            contents=[file_part, PROMPT],
+            config=types.GenerateContentConfig(response_mime_type="application/json",
+                                               response_schema=Invoice),
+        )
+    except errors.APIError as error:
+        if is_temporary(error.code):
+            raise TemporaryError(f"Gemini unavailable ({error.code}): {error.message}") from error
+        raise
+    except (httpx.HTTPError, OSError) as error:
+        raise TemporaryError(f"Cannot reach Gemini: {error}") from error
     if response.parsed is None:
         raise ValueError("Gemini returned no invoice data")
     return response.parsed

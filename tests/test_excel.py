@@ -70,3 +70,13 @@ def test_save_excel_formula_text_stays_text(tmp_path):
 def test_save_excel_strips_illegal_characters(tmp_path):
     path = save_excel({"S": [{"Name": "Bad\x01Name"}]}, tmp_path / "r.xlsx")
     assert load_workbook(path)["S"]["A2"].value == "BadName"
+
+
+def test_save_excel_is_atomic_and_cleans_up(tmp_path, monkeypatch):
+    def locked(src, dst):
+        raise PermissionError("in use")
+
+    monkeypatch.setattr("core.excel.os.replace", locked)
+    with pytest.raises(PermissionError, match="Close it and run again"):
+        save_excel({"S": [{"A": 1}]}, tmp_path / "r.xlsx")
+    assert list(tmp_path.iterdir()) == []

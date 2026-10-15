@@ -84,3 +84,56 @@ def test_extract_invoice_live():
     assert invoice["Total"] == 303.56
     assert invoice["Status"] == "OK"
     assert items
+
+
+import httpx
+from google.genai import errors
+
+from extractors import invoices as invoices_module
+from extractors.invoices import TemporaryError, is_temporary
+
+
+@pytest.mark.parametrize("code,expected", [(429, True), (500, True), (503, True), (401, True),
+                                           (403, True), (400, False), (404, False)])
+def test_is_temporary(code, expected):
+    assert is_temporary(code) is expected
+
+
+def fake_client(error):
+    class Models:
+        def generate_content(self, **kwargs):
+            raise error
+
+    class Client:
+        def __init__(self, api_key):
+            self.models = Models()
+    return Client
+
+
+@pytest.fixture
+def pdf(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    path = tmp_path / "inv.pdf"
+    path.write_bytes(b"%PDF-1.4")
+    return path
+
+
+def test_read_invoice_quota_error_is_temporary(pdf, monkeypatch):
+    quota = errors.APIError(429, {"error": {"message": "quota", "status": "RESOURCE_EXHAUSTED"}})
+    monkeypatch.setattr(invoices_module.genai, "Client", fake_client(quota))
+    with pytest.raises(TemporaryError):
+        read_invoice(pdf)
+
+
+def test_read_invoice_network_error_is_temporary(pdf, monkeypatch):
+    monkeypatch.setattr(invoices_module.genai, "Client", fake_client(httpx.ConnectError("offline")))
+    with pytest.raises(TemporaryError):
+        read_invoice(pdf)
+
+
+def test_read_invoice_bad_file_is_not_temporary(pdf, monkeypatch):
+    bad = errors.APIError(400, {"error": {"message": "bad document", "status": "INVALID_ARGUMENT"}})
+    monkeypatch.setattr(invoices_module.genai, "Client", fake_client(bad))
+    with pytest.raises(errors.APIError) as info:
+        read_invoice(pdf)
+    assert not isinstance(info.value, TemporaryError)

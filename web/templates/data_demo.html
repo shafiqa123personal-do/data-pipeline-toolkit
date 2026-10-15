@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data Pipeline Toolkit — Live Demo</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="hero">
+    <h1>Data Pipeline Toolkit</h1>
+    <p>Web scraping · AI data extraction · Python automation — try it live, then download the Excel file.</p>
+  </header>
+
+  <main class="cards">
+    <section class="card">
+      <span class="tag">1 · Web Scraping</span>
+      <h2>Scrape a website into Excel</h2>
+      <p>Collects every book's title, price and rating from <em>books.toscrape.com</em> (a site built for scraping practice) — live, right now.</p>
+      <form id="books-form" data-url="{{ url_for('books') }}">
+        <label for="pages">Pages (20 books each)</label>
+        <select id="pages" name="pages">
+          {% for n in range(1, max_pages + 1) %}<option value="{{ n }}"{% if n == 2 %} selected{% endif %}>{{ n }}</option>{% endfor %}
+        </select>
+        <button id="books-run" type="submit">Run live scrape</button>
+      </form>
+      <div id="books-result" class="result"></div>
+    </section>
+
+    <section class="card">
+      <span class="tag">2 · Data Extraction</span>
+      <h2>Read an invoice with AI</h2>
+      <p>Gemini AI reads the invoice — PDF or a phone photo — and returns clean fields, line items and a check that the numbers add up.</p>
+      <form id="invoice-form" data-url="{{ url_for('invoices') }}">
+        <label for="invoice">Sample invoice (fictional)</label>
+        <select id="invoice" name="invoice">
+          {% for key, item in invoices.items() %}<option value="{{ key }}">{{ item.label }}</option>{% endfor %}
+        </select>
+        <button id="invoice-run" type="submit">Extract data</button>
+      </form>
+      <p class="small">View the originals:
+        {% for key, item in invoices.items() %}<a href="{{ url_for('invoice_file', key=key) }}" target="_blank" rel="noopener">{{ item.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}
+      </p>
+      <div id="invoice-result" class="result"></div>
+    </section>
+
+    <section class="card">
+      <span class="tag">3 · Lead Generation</span>
+      <h2>Google Maps business leads</h2>
+      <p>Runs on a desktop with Chrome, so it isn't live here. Real sample: plumbers in London — phones masked, only generic business emails.</p>
+      {% if leads %}
+      <div class="table-wrap">
+        <table>
+          <tr><th>Name</th><th>Category</th><th>Rating</th><th>Phone</th><th>Email</th></tr>
+          {% for lead in leads %}<tr><td>{{ lead.Name }}</td><td>{{ lead.Category }}</td><td>{{ lead.Rating or "" }}</td><td>{{ lead.Phone }}</td><td>{{ lead.Email or "" }}</td></tr>{% endfor %}
+        </table>
+      </div>
+      {% endif %}
+      <a class="button" href="{{ url_for('sample', name='leads_sample.xlsx') }}">Download sample (Excel)</a>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p><strong>Need this for your own data?</strong> Any website, your invoices, your leads — delivered as Excel, on a schedule if you like.</p>
+    <p><a class="button" href="{{ fiverr_url }}" target="_blank" rel="noopener">Hire me on Fiverr</a>
+       <a class="button secondary" href="{{ github_url }}" target="_blank" rel="noopener">Source code on GitHub</a></p>
+  </footer>
+
+  <script>
+    function el(tag, text, className) {
+      const node = document.createElement(tag);
+      if (text !== undefined && text !== null) node.textContent = text;
+      if (className) node.className = className;
+      return node;
+    }
+
+    function table(headers, rows) {
+      const wrap = el("div", null, "table-wrap");
+      const t = el("table");
+      const head = el("tr");
+      headers.forEach(h => head.appendChild(el("th", h)));
+      t.appendChild(head);
+      rows.forEach(row => {
+        const tr = el("tr");
+        row.forEach(cell => tr.appendChild(el("td", cell ?? "")));
+        t.appendChild(tr);
+      });
+      wrap.appendChild(t);
+      return wrap;
+    }
+
+    function link(href, text) {
+      const a = el("a", text, "button");
+      a.href = href;
+      return a;
+    }
+
+    function showError(box, data) {
+      box.replaceChildren(el("p", data.error || "Something went wrong.", "error"));
+      if (data.sample) box.appendChild(link(data.sample, "Download the sample instead"));
+    }
+
+    async function run(form, box, render) {
+      const button = form.querySelector("button");
+      button.disabled = true;
+      box.replaceChildren(el("p", "Working… this takes a few seconds.", "small"));
+      try {
+        const response = await fetch(form.dataset.url, { method: "POST", body: new FormData(form) });
+        const data = await response.json();
+        if (!response.ok) showError(box, data); else render(box, data);
+      } catch (err) {
+        box.replaceChildren(el("p", "Could not reach the server. Please try again.", "error"));
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function renderBooks(box, data) {
+      const avg = (data.summary.find(r => r.Metric === "Average price (£)") || {}).Value;
+      box.replaceChildren(
+        el("p", `✔ ${data.count} books scraped live · average price £${avg}. First ${data.preview.length}:`, "ok"),
+        table(["Title", "Price (£)", "Rating"],
+              data.preview.map(b => [b.Title, b.Price, "★".repeat(b.Rating || 0)])),
+        link(data.download, "Download Excel (with Summary)"));
+    }
+
+    function renderInvoice(box, data) {
+      const inv = data.invoice;
+      box.replaceChildren(
+        el("p", `✔ ${inv.Status === "OK" ? "All checks passed" : inv.Status}`, inv.Status === "OK" ? "ok" : "error"),
+        table(["Supplier", "Invoice No", "Date", "Total"],
+              [[inv.Supplier, inv["Invoice No"], inv["Invoice Date"], `${inv.Currency} ${inv.Total}`]]),
+        table(["Item", "Qty", "Amount"], data.items.map(i => [i.Description, i.Quantity, i.Amount])),
+        link(data.download, "Download Excel"));
+    }
+
+    const bindings = [["books-form", "books-result", renderBooks], ["invoice-form", "invoice-result", renderInvoice]];
+    bindings.forEach(([formId, boxId, render]) => {
+      const form = document.getElementById(formId);
+      form.addEventListener("submit", event => {
+        event.preventDefault();
+        run(form, document.getElementById(boxId), render);
+      });
+    });
+  </script>
+</body>
+</html>

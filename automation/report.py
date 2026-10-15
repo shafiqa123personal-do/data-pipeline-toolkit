@@ -42,6 +42,22 @@ def summarize_invoices(invoices):
     return summary
 
 
+def summarize_leads(leads):
+    """How complete the lead list is: share of leads with phone / website / email."""
+    total = len(leads)
+
+    def share(field):
+        count = sum(1 for lead in leads if lead.get(field))
+        return f"{count} ({round(100 * count / total)}%)" if total else "0"
+
+    summary = [{"Metric": "Total leads", "Value": total},
+               {"Metric": "With phone", "Value": share("Phone")},
+               {"Metric": "With website", "Value": share("Website")}]
+    if any("Email" in lead for lead in leads):
+        summary.append({"Metric": "With email", "Value": share("Email")})
+    return summary
+
+
 def compare_books(current, previous):
     """What changed since the last run: new books, removed books, price changes."""
     if previous is None:
@@ -83,18 +99,19 @@ def find_previous_report(output_dir, kind, exclude=None):
 
 def build_report(kind, rows, output_dir, now=None):
     """Write the full report and return its path."""
-    if kind != "books":
+    if kind not in ("books", "leads"):
         raise ValueError(f"Unknown report kind: {kind}")
     now = now or datetime.now()
     output_dir = Path(output_dir)
     path = output_dir / f"{kind}_report_{now:%Y-%m-%d_%H%M}.xlsx"
 
-    previous = _load_previous(find_previous_report(output_dir, kind, exclude=path))
-    save_excel({
-        "Summary": summarize_books(rows),
-        "Books": rows,
-        "Changes": compare_books(rows, previous),
-    }, path)
+    if kind == "books":
+        previous = _load_previous(find_previous_report(output_dir, kind, exclude=path))
+        sheets = {"Summary": summarize_books(rows), "Books": rows,
+                  "Changes": compare_books(rows, previous)}
+    else:
+        sheets = {"Summary": summarize_leads(rows), "Leads": rows}
+    save_excel(sheets, path)
     log.info("Report saved: %s", path)
     return path
 

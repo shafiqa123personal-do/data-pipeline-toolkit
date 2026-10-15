@@ -100,3 +100,27 @@ def test_build_report_ignores_corrupt_previous(tmp_path):
 def test_build_report_unknown_kind(tmp_path):
     with pytest.raises(ValueError):
         build_report("cars", [], tmp_path)
+
+
+from automation.report import summarize_leads
+
+
+def test_summarize_leads():
+    leads = [{"Phone": "1", "Website": "w", "Email": "e"}, {"Phone": "2", "Website": "", "Email": ""},
+             {"Phone": "", "Website": "", "Email": ""}]
+    summary = as_dict(summarize_leads(leads))
+    assert summary["Total leads"] == 3
+    assert summary["With phone"] == "2 (67%)"
+    assert summary["With website"] == "1 (33%)"
+    assert summary["With email"] == "1 (33%)"
+
+
+def test_summarize_leads_without_email_column():
+    assert "With email" not in as_dict(summarize_leads([{"Phone": "1", "Website": ""}]))
+
+
+def test_build_report_leads(tmp_path):
+    path = build_report("leads", [{"Name": "A", "Phone": "1", "Website": ""}], tmp_path,
+                        now=datetime(2026, 10, 15, 9, 30))
+    assert path.name == "leads_report_2026-10-15_0930.xlsx"
+    assert load_workbook(path).sheetnames == ["Summary", "Leads"]

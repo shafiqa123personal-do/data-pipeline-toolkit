@@ -2,6 +2,7 @@
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
@@ -24,7 +25,10 @@ def save_excel(sheets, path):
             headers, rows = ["Info"], [{"Info": "No data"}]
         ws.append(headers)
         for row in rows:
-            ws.append([row.get(header) for header in headers])
+            ws.append([_clean(row.get(header)) for header in headers])
+            for cell in ws[ws.max_row]:
+                if isinstance(cell.value, str) and cell.value.startswith("="):
+                    cell.data_type = "s"           # scraped text, never a formula
         for cell in ws[1]:
             cell.font = Font(bold=True)
         ws.auto_filter.ref = ws.dimensions         # filter buttons on the header row
@@ -62,6 +66,13 @@ def _headers(rows):
             if key not in headers:
                 headers.append(key)
     return headers
+
+
+def _clean(value):
+    """Remove control characters Excel cannot store."""
+    if isinstance(value, str):
+        return ILLEGAL_CHARACTERS_RE.sub("", value)
+    return value
 
 
 def _fit_columns(ws):

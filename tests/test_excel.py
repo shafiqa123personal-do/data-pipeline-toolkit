@@ -58,3 +58,15 @@ def test_read_sheet_round_trip(tmp_path):
 def test_read_sheet_missing_sheet(tmp_path):
     path = save_excel({"Books": [{"A": 1}]}, tmp_path / "r.xlsx")
     assert read_sheet(path, "Nope") == []
+
+
+def test_save_excel_formula_text_stays_text(tmp_path):
+    path = save_excel({"S": [{"Name": "=HYPERLINK(\"http://evil\")"}]}, tmp_path / "r.xlsx")
+    cell = load_workbook(path)["S"]["A2"]
+    assert cell.data_type == "s"
+    assert cell.value == "=HYPERLINK(\"http://evil\")"
+
+
+def test_save_excel_strips_illegal_characters(tmp_path):
+    path = save_excel({"S": [{"Name": "Bad\x01Name"}]}, tmp_path / "r.xlsx")
+    assert load_workbook(path)["S"]["A2"].value == "BadName"

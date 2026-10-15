@@ -1,0 +1,134 @@
+import os
+import time
+from datetime import datetime
+
+import pytest
+
+from web.demo import DEMO_INVOICES, DemoError, DemoRunner, RateLimiter
+
+
+def fake_scrape(calls):
+    def _scrape(pages, delay):
+        calls.append(pages)
+        return [{"Title": f"Book {i}", "Price": 10.0 + i, "Rating": 3, "Link": f"https://b/{i}",
+                 "Page": 1 + i // 20} for i in range(pages * 20)]
+    return _scrape
+
+
+def fake_extract(calls):
+    def _extract(path):
+        calls.append(path.name)
+        return ({"File": path.name, "Supplier": "Brightline", "Currency": "GBP", "Total": 303.56,
+                 "Status": "OK"}, [{"File": path.name, "Description": "Paper", "Amount": 303.56}])
+    return _extract
+
+
+class Clock:
+    def __init__(self, value):
+        self.value = value
+
+    def __call__(self):
+        return self.value
+
+
+@pytest.fixture
+def runner(tmp_path):
+    scrapes, extracts = [], []
+    clock = Clock(datetime(2026, 10, 15, 9, 30))
+    demo = DemoRunner(tmp_path / "cache", tmp_path / "samples", scrape=fake_scrape(scrapes),
+                      extract=fake_extract(extracts), now=clock)
+    return demo, scrapes, extracts, clock
+
+
+def test_books_result(runner):
+    demo, scrapes, _, _ = runner
+    result = demo.books(2)
+    assert result["count"] == 40
+    assert len(result["preview"]) == 10
+    assert result["preview"][0]["Title"] == "Book 0"
+    assert {row["Metric"] for row in result["summary"]} >= {"Total books", "Average price (£)"}
+    assert demo.file_path(result["file"]).exists()
+
+
+def test_books_cached_within_the_hour(runner):
+    demo, scrapes, _, clock = runner
+    demo.books(1)
+    clock.value = datetime(2026, 10, 15, 9, 59)
+    demo.books(1)
+    assert scrapes == [1]
+    clock.value = datetime(2026, 10, 15, 10, 1)
+    demo.books(1)
+    assert scrapes == [1, 1]
+
+
+def test_books_bad_page_count(runner):
+    demo, *_ = runner
+    for pages in (0, 6):
+        with pytest.raises(DemoError):
+            demo.books(pages)
+
+
+def test_books_unavailable(tmp_path):
+    demo = DemoRunner(tmp_path, tmp_path, scrape=lambda pages, delay: [])
+    with pytest.raises(DemoError, match="sample"):
+        demo.books(1)
+
+
+def test_invoice_result(runner):
+    demo, _, extracts, _ = runner
+    result = demo.invoice("brightline")
+    assert result["invoice"]["Total"] == 303.56
+    assert result["items"][0]["Description"] == "Paper"
+    assert extracts == [DEMO_INVOICES["brightline"]["file"]]
+
+
+def test_invoice_is_cached_for_the_day(runner):
+    demo, _, extracts, clock = runner
+    demo.invoice("brightline")
+    clock.value = datetime(2026, 10, 15, 23, 0)
+    demo.invoice("brightline")
+    assert len(extracts) == 1
+
+
+def test_invoice_unknown_key(runner):
+    demo, *_ = runner
+    with pytest.raises(DemoError):
+        demo.invoice("../../.env")
+
+
+def test_invoice_unavailable(tmp_path):
+    def broken(path):
+        raise RuntimeError("Gemini down")
+
+    demo = DemoRunner(tmp_path, tmp_path, extract=broken)
+    with pytest.raises(DemoError, match="sample"):
+        demo.invoice("pioneer")
+
+
+def test_file_path_rejects_unknown_names(runner):
+    demo, *_ = runner
+    for name in ("../config.py", "books-1.xlsx", "secret.xlsx", "books-9-20261015-09.xlsx"):
+        assert demo.file_path(name) is None
+
+
+def test_old_cache_files_are_cleaned(runner):
+    demo, _, _, _ = runner
+    old = demo.cache_dir / "books-1-20261001-09.xlsx"
+    demo.cache_dir.mkdir(parents=True, exist_ok=True)
+    old.write_bytes(b"old")
+    week_ago = time.time() - 7 * 24 * 3600
+    os.utime(old, (week_ago, week_ago))
+    demo.books(1)
+    assert not old.exists()
+
+
+def test_rate_limiter():
+    clock = Clock(100.0)
+    limiter = RateLimiter(wait=30, clock=clock)
+    assert limiter.check("1.2.3.4:books") == 0
+    clock.value = 110.0
+    assert limiter.check("1.2.3.4:books") == 20
+    assert limiter.check("1.2.3.4:invoices") == 0      # other card is separate
+    assert limiter.check("5.6.7.8:books") == 0         # other visitor is separate
+    clock.value = 131.0
+    assert limiter.check("1.2.3.4:books") == 0

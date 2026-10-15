@@ -74,8 +74,8 @@ button:disabled { opacity: 0.6; cursor: wait; }
 
 .table-wrap { overflow-x: auto; margin: 10px 0; }
 table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
-th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; white-space: nowrap; }
-th { background: #f7f5ff; }
-td:first-child { white-space: normal; min-width: 140px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
+th { background: #f7f5ff; white-space: nowrap; }
+td:first-child { min-width: 110px; }
 
 .footer { text-align: center; padding: 36px 16px 48px; max-width: 760px; margin: 0 auto; }

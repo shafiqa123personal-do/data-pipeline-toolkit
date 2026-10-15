@@ -51,8 +51,8 @@
       {% if leads %}
       <div class="table-wrap">
         <table>
-          <tr><th>Name</th><th>Category</th><th>Rating</th><th>Phone</th><th>Email</th></tr>
-          {% for lead in leads %}<tr><td>{{ lead.Name }}</td><td>{{ lead.Category }}</td><td>{{ lead.Rating or "" }}</td><td>{{ lead.Phone }}</td><td>{{ lead.Email or "" }}</td></tr>{% endfor %}
+          <tr><th>Name</th><th>Rating</th><th>Phone</th></tr>
+          {% for lead in leads %}<tr><td>{{ lead.Name }}</td><td>{{ lead.Rating or "" }}</td><td>{{ lead.Phone }}</td></tr>{% endfor %}
         </table>
       </div>
       {% endif %}
@@ -128,8 +128,9 @@
       const inv = data.invoice;
       box.replaceChildren(
         el("p", `✔ ${inv.Status === "OK" ? "All checks passed" : inv.Status}`, inv.Status === "OK" ? "ok" : "error"),
-        table(["Supplier", "Invoice No", "Date", "Total"],
-              [[inv.Supplier, inv["Invoice No"], inv["Invoice Date"], `${inv.Currency} ${inv.Total}`]]),
+        table(["Field", "Extracted"],
+              [["Supplier", inv.Supplier], ["Invoice No", inv["Invoice No"]],
+               ["Date", inv["Invoice Date"]], ["Total", `${inv.Currency} ${inv.Total}`]]),
         table(["Item", "Qty", "Amount"], data.items.map(i => [i.Description, i.Quantity, i.Amount])),
         link(data.download, "Download Excel"));
     }

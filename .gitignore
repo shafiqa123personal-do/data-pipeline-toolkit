@@ -9,3 +9,4 @@ invoices/done/*
 invoices/failed/*
 real_samples/
 ~$*.xlsx
+docs/superpowers/

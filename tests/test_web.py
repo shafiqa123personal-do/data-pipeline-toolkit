@@ -4,7 +4,7 @@ from flask import Flask
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 from werkzeug.test import Client
 
-from web.app import create_app
+from web.app import SAMPLES_DIR, create_app
 from web.demo import DemoRunner, RateLimiter
 
 
@@ -20,7 +20,7 @@ def extract(path):
 
 
 def make_client(tmp_path, scrape=scrape, extract=extract, wait=30):
-    runner = DemoRunner(tmp_path / "cache", "samples", scrape=scrape, extract=extract,
+    runner = DemoRunner(tmp_path / "cache", SAMPLES_DIR, scrape=scrape, extract=extract,
                         now=lambda: datetime(2026, 10, 15, 9, 30))
     app = create_app(runner=runner, limiter=RateLimiter(wait=wait))
     return app.test_client()

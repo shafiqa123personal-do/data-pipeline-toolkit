@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -134,9 +134,6 @@ def test_rate_limiter():
     assert limiter.check("1.2.3.4:books") == 0
 
 
-from datetime import timedelta
-
-
 def test_scrape_crash_becomes_friendly_error(tmp_path):
     def crash(pages, delay):
         raise RuntimeError("site layout changed")
@@ -189,3 +186,59 @@ def test_live_runs_are_capped_per_hour(runner):
         demo.books(3)
     demo.books(1)                                  # cached results are always fine
     assert scrapes == [1, 2]
+
+
+def test_partial_scrape_is_labelled_and_tried_again(tmp_path):
+    calls = []
+
+    def half(pages, delay):
+        calls.append(pages)
+        return fake_scrape([])(pages - 1, delay)    # one page short
+
+    demo = DemoRunner(tmp_path, tmp_path, scrape=half, now=lambda: datetime(2026, 10, 15, 9, 30))
+    result = demo.books(2)
+    assert result["partial"] is True
+    assert result["count"] == 20
+    assert demo.file_path(result["file"]) is not None
+    demo.books(2)
+    assert calls == [2, 2]                         # partial results are not kept for the hour
+
+
+def test_full_scrape_is_not_partial(runner):
+    demo, *_ = runner
+    assert demo.books(1)["partial"] is False
+
+
+def test_result_says_how_old_it_is(runner):
+    demo, _, _, clock = runner
+    assert demo.books(1)["minutes_ago"] == 0
+    clock.value = datetime(2026, 10, 15, 9, 50)
+    assert demo.books(1)["minutes_ago"] == 20
+
+
+def test_file_path_rejects_page_counts_above_the_limit(runner):
+    demo, *_ = runner
+    demo.cache_dir.mkdir(parents=True, exist_ok=True)
+    (demo.cache_dir / "books-12-20261015-09.xlsx").write_bytes(b"x")
+    assert demo.file_path("books-12-20261015-09.xlsx") is None
+
+
+def test_old_tmp_files_are_cleaned(runner):
+    demo, *_ = runner
+    demo.cache_dir.mkdir(parents=True, exist_ok=True)
+    leftover = demo.cache_dir / "books-1-20261001-09.xlsx.tmp"
+    leftover.write_bytes(b"half written")
+    week_ago = time.time() - 7 * 24 * 3600
+    os.utime(leftover, (week_ago, week_ago))
+    demo.books(1)
+    assert not leftover.exists()
+
+
+def test_rate_limiter_forgets_old_visitors():
+    clock = Clock(0.0)
+    limiter = RateLimiter(wait=30, clock=clock)
+    for n in range(100):
+        limiter.check(f"10.0.0.{n}:books")
+    clock.value = 100.0
+    limiter.check("1.2.3.4:books")
+    assert len(limiter.last_run) == 1

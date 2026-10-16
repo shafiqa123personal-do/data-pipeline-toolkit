@@ -22,10 +22,11 @@ DEMO_INVOICES = {
     "pioneer": {"file": "scanned_receipt_pioneer.jpg", "label": "Pioneer Hardware (scanned photo)"},
 }
 MAX_DEMO_PAGES = 5
+BOOKS_PER_PAGE = 20
 WAIT_SECONDS = 30
 PREVIEW_ROWS = 10
 KEEP_SECONDS = 2 * 24 * 3600
-CACHE_NAME = re.compile(r"^(books-[1-5]-\d{8}-\d{2}|invoice-[a-z]+-\d{8})\.xlsx$")
+CACHE_NAME = re.compile(r"^(books-(\d+)-\d{8}-\d{2}(-partial)?|invoice-[a-z]+-\d{8})\.xlsx$")
 FAILURE_COOLDOWN = timedelta(minutes=5)   # after a failure, don't retry for every visitor
 MAX_LIVE_RUNS_PER_HOUR = 30               # protects the shared server and the Gemini quota
 UNAVAILABLE = {
@@ -52,6 +53,7 @@ class RateLimiter:
     def check(self, key):
         """0 = allowed (and recorded); otherwise whole seconds left to wait."""
         now = self.clock()
+        self.last_run = {k: t for k, t in self.last_run.items() if now - t < self.wait}  # forget old visitors
         last = self.last_run.get(key)
         if last is not None and now - last < self.wait:
             return math.ceil(self.wait - (now - last))
@@ -76,20 +78,28 @@ class DemoRunner:
             raise DemoError(f"Choose between 1 and {MAX_DEMO_PAGES} pages.")
         name = f"books-{pages}-{self.now():%Y%m%d-%H}.xlsx"           # cached for the hour
         path = self.cache_dir / name
+        partial = False
         if not path.exists():
             self._start_live_run("books")
             try:
                 books = self.scrape(pages, delay=0.3)
                 if not books:
                     raise ValueError("no books scraped")
-                save_excel({"Summary": summarize_books(books), "Books": books}, path)
+                partial = len(books) < pages * BOOKS_PER_PAGE
+                if partial:                                       # not kept: next visitor retries
+                    name = name.replace(".xlsx", "-partial.xlsx")
+                    path = self.cache_dir / name
+                scraped_at = {"Metric": "Scraped at", "Value": f"{self.now():%Y-%m-%d %H:%M}"}
+                save_excel({"Summary": [scraped_at] + summarize_books(books), "Books": books}, path)
             except Exception as error:
                 log.error("Demo scrape failed: %s", error)
                 raise self._unavailable("books") from error
             self._clean_old_files()
         books = read_sheet(path, "Books")
-        return {"file": name, "count": len(books), "summary": read_sheet(path, "Summary"),
-                "preview": books[:PREVIEW_ROWS]}
+        summary = read_sheet(path, "Summary")
+        return {"file": name, "count": len(books), "summary": summary,
+                "preview": books[:PREVIEW_ROWS], "partial": partial,
+                "minutes_ago": self._minutes_since(summary)}
 
     def invoice(self, key):
         if key not in DEMO_INVOICES:
@@ -110,7 +120,8 @@ class DemoRunner:
 
     def file_path(self, name):
         """Only files this runner created - never anything else on disk."""
-        if not CACHE_NAME.match(name):
+        match = CACHE_NAME.match(name)
+        if not match or (match.group(2) and not 1 <= int(match.group(2)) <= MAX_DEMO_PAGES):
             return None
         path = self.cache_dir / name
         return path if path.exists() else None
@@ -130,8 +141,15 @@ class DemoRunner:
         self.failed_until[card] = self.now() + FAILURE_COOLDOWN
         return DemoError(UNAVAILABLE[card])
 
+    def _minutes_since(self, summary):
+        scraped_at = next((row["Value"] for row in summary if row.get("Metric") == "Scraped at"), None)
+        if not scraped_at:
+            return 0
+        age = self.now() - datetime.strptime(scraped_at, "%Y-%m-%d %H:%M")
+        return max(0, int(age.total_seconds() // 60))
+
     def _clean_old_files(self):
         cutoff = time.time() - KEEP_SECONDS
-        for file in self.cache_dir.glob("*.xlsx"):
+        for file in self.cache_dir.glob("*.xlsx*"):               # reports and leftover .tmp files
             if file.stat().st_mtime < cutoff:
                 file.unlink(missing_ok=True)

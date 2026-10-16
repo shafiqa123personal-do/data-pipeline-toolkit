@@ -1,5 +1,6 @@
 import pytest
 
+import config
 import run
 
 
@@ -42,9 +43,6 @@ def test_pages_out_of_range_rejected(value, tmp_path):
 def test_job_is_required(tmp_path):
     with pytest.raises(SystemExit):
         run.main([], output_dir=tmp_path, log_dir=tmp_path)
-
-
-import config
 
 
 def fake_leads(searches, max_results=20):

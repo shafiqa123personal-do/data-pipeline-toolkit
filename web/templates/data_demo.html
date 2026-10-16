@@ -16,7 +16,7 @@
     <section class="card">
       <span class="tag">1 · Web Scraping</span>
       <h2>Scrape a website into Excel</h2>
-      <p>Collects every book's title, price and rating from <em>books.toscrape.com</em> (a site built for scraping practice) — live, right now.</p>
+      <p>Collects every book's title, price and rating from <em>books.toscrape.com</em> (a site built for scraping practice) — scraped live, results reused for up to an hour.</p>
       <form id="books-form" data-url="{{ url_for('books') }}">
         <label for="pages">Pages (20 books each)</label>
         <select id="pages" name="pages">
@@ -117,17 +117,21 @@
 
     function renderBooks(box, data) {
       const avg = (data.summary.find(r => r.Metric === "Average price (£)") || {}).Value;
+      const when = data.minutes_ago === 0 ? "just now" : `${data.minutes_ago} min ago`;
       box.replaceChildren(
-        el("p", `✔ ${data.count} books scraped live · average price £${avg}. First ${data.preview.length}:`, "ok"),
+        el("p", `✔ ${data.count} books scraped ${when} · average price £${avg}. First ${data.preview.length}:`, "ok"),
         table(["Title", "Price (£)", "Rating"],
               data.preview.map(b => [b.Title, b.Price, "★".repeat(b.Rating || 0)])),
         link(data.download, "Download Excel (with Summary)"));
+      if (data.partial) box.insertBefore(
+        el("p", "Some pages could not be loaded this time, so the list is shorter than usual.", "small"),
+        box.children[1]);
     }
 
     function renderInvoice(box, data) {
       const inv = data.invoice;
       box.replaceChildren(
-        el("p", `✔ ${inv.Status === "OK" ? "All checks passed" : inv.Status}`, inv.Status === "OK" ? "ok" : "error"),
+        el("p", inv.Status === "OK" ? "✔ All checks passed" : `⚠ ${inv.Status}`, inv.Status === "OK" ? "ok" : "error"),
         table(["Field", "Extracted"],
               [["Supplier", inv.Supplier], ["Invoice No", inv["Invoice No"]],
                ["Date", inv["Invoice Date"]], ["Total", `${inv.Currency} ${inv.Total}`]]),

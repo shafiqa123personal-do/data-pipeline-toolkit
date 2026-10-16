@@ -24,6 +24,12 @@
  invoice files  ──►      Gemini AI + maths checks  ──►   master Excel, files sorted
 ```
 
+## Screenshots
+
+| Invoice photo → Excel with AI | Runs by itself |
+|---|---|
+| ![Invoice to Excel](docs/images/portfolio_2.png) | ![Automation log](docs/images/portfolio_3.png) |
+
 ## Sample outputs
 
 - [Books report](samples/books_report_sample.xlsx) — Summary + Books sheets
@@ -71,7 +77,7 @@ run.py        one command for every job
 
 ## Responsible scraping
 
-- Each site's `robots.txt` is checked before a job is set up; scrapers use polite delays, timeouts and a browser User-Agent.
+- Before scraping a new site I check its `robots.txt` and terms of use; the scrapers use polite delays, timeouts and a browser User-Agent.
 - Collects **public business information only**. Emails are only taken when they belong to the business's own website domain (or are its listed free-mail address).
 - For UK/EU contacts, follow GDPR/PECR rules on how you use business emails.
 - books.toscrape.com is a sandbox site made for scraping practice.

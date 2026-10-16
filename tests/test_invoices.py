@@ -1,8 +1,11 @@
+import httpx
 import pytest
+from google.genai import errors
 
 import config
-from extractors.invoices import (Invoice, LineItem, check_invoice, extract_invoice,
-                                 read_invoice, to_rows)
+from extractors import invoices as invoices_module
+from extractors.invoices import (Invoice, LineItem, TemporaryError, check_invoice,
+                                 extract_invoice, is_temporary, read_invoice, to_rows)
 
 
 def make_invoice(**changes):
@@ -84,13 +87,6 @@ def test_extract_invoice_live():
     assert invoice["Total"] == 303.56
     assert invoice["Status"] == "OK"
     assert items
-
-
-import httpx
-from google.genai import errors
-
-from extractors import invoices as invoices_module
-from extractors.invoices import TemporaryError, is_temporary
 
 
 @pytest.mark.parametrize("code,expected", [(429, True), (500, True), (503, True), (401, True),

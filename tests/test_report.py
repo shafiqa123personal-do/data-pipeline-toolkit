@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 from openpyxl import load_workbook
 
-from automation.report import build_report, compare_books, summarize_books
+from automation.report import build_report, compare_books, summarize_books, summarize_leads
 from core.excel import read_sheet
 
 
@@ -100,9 +100,6 @@ def test_build_report_ignores_corrupt_previous(tmp_path):
 def test_build_report_unknown_kind(tmp_path):
     with pytest.raises(ValueError):
         build_report("cars", [], tmp_path)
-
-
-from automation.report import summarize_leads
 
 
 def test_summarize_leads():

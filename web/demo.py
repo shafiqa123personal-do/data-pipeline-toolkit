@@ -4,11 +4,13 @@ import logging
 import math
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+from functools import partial
 from pathlib import Path
 
 from automation.report import summarize_books
 from core.excel import read_sheet, save_excel
+from core.http import get_page
 from extractors.invoices import extract_invoice
 from scrapers.books import scrape_books
 
@@ -24,10 +26,21 @@ WAIT_SECONDS = 30
 PREVIEW_ROWS = 10
 KEEP_SECONDS = 2 * 24 * 3600
 CACHE_NAME = re.compile(r"^(books-[1-5]-\d{8}-\d{2}|invoice-[a-z]+-\d{8})\.xlsx$")
+FAILURE_COOLDOWN = timedelta(minutes=5)   # after a failure, don't retry for every visitor
+MAX_LIVE_RUNS_PER_HOUR = 30               # protects the shared server and the Gemini quota
+UNAVAILABLE = {
+    "books": "The live scrape is unavailable right now - download the sample report instead.",
+    "invoices": "AI extraction is unavailable right now - download the sample result instead.",
+}
 
 
 class DemoError(Exception):
     """A friendly message for the visitor."""
+
+
+def demo_scrape(pages, delay):
+    """Fail fast on the shared web server: one try and a short timeout per page."""
+    return scrape_books(pages, delay=delay, fetch=partial(get_page, retries=1, timeout=8))
 
 
 class RateLimiter:
@@ -47,13 +60,16 @@ class RateLimiter:
 
 
 class DemoRunner:
-    def __init__(self, cache_dir, samples_dir, scrape=scrape_books, extract=extract_invoice,
-                 now=datetime.now):
+    def __init__(self, cache_dir, samples_dir, scrape=demo_scrape, extract=extract_invoice,
+                 now=datetime.now, max_live_runs=MAX_LIVE_RUNS_PER_HOUR):
         self.cache_dir = Path(cache_dir)
         self.samples_dir = Path(samples_dir)
         self.scrape = scrape
         self.extract = extract
         self.now = now
+        self.max_live_runs = max_live_runs
+        self.failed_until = {}
+        self.live_runs = {}
 
     def books(self, pages):
         if pages not in range(1, MAX_DEMO_PAGES + 1):
@@ -61,11 +77,15 @@ class DemoRunner:
         name = f"books-{pages}-{self.now():%Y%m%d-%H}.xlsx"           # cached for the hour
         path = self.cache_dir / name
         if not path.exists():
-            books = self.scrape(pages, delay=0.3)
-            if not books:
-                raise DemoError("The live scrape is unavailable right now - "
-                                "download the sample report instead.")
-            save_excel({"Summary": summarize_books(books), "Books": books}, path)
+            self._start_live_run("books")
+            try:
+                books = self.scrape(pages, delay=0.3)
+                if not books:
+                    raise ValueError("no books scraped")
+                save_excel({"Summary": summarize_books(books), "Books": books}, path)
+            except Exception as error:
+                log.error("Demo scrape failed: %s", error)
+                raise self._unavailable("books") from error
             self._clean_old_files()
         books = read_sheet(path, "Books")
         return {"file": name, "count": len(books), "summary": read_sheet(path, "Summary"),
@@ -77,13 +97,13 @@ class DemoRunner:
         name = f"invoice-{key}-{self.now():%Y%m%d}.xlsx"              # cached for the day
         path = self.cache_dir / name
         if not path.exists():
+            self._start_live_run("invoices")
             try:
                 invoice, items = self.extract(self.samples_dir / "invoices" / DEMO_INVOICES[key]["file"])
+                save_excel({"Invoice": [invoice], "Line Items": items}, path)
             except Exception as error:
                 log.error("Demo extraction failed for %s: %s", key, error)
-                raise DemoError("AI extraction is unavailable right now - "
-                                "download the sample result instead.") from error
-            save_excel({"Invoice": [invoice], "Line Items": items}, path)
+                raise self._unavailable("invoices") from error
             self._clean_old_files()
         items = [row for row in read_sheet(path, "Line Items") if row.get("File")]
         return {"file": name, "invoice": read_sheet(path, "Invoice")[0], "items": items}
@@ -94,6 +114,21 @@ class DemoRunner:
             return None
         path = self.cache_dir / name
         return path if path.exists() else None
+
+    def _start_live_run(self, card):
+        """Refuse quickly while a recent failure cools down or the hourly cap is reached."""
+        now = self.now()
+        if self.failed_until.get(card, datetime.min) > now:
+            raise DemoError(UNAVAILABLE[card])
+        hour = f"{now:%Y%m%d%H}"
+        if self.live_runs.get(hour, 0) >= self.max_live_runs:
+            raise DemoError("The demo is busy right now - please try again later, "
+                            "or download the sample.")
+        self.live_runs = {hour: self.live_runs.get(hour, 0) + 1}   # only the current hour
+
+    def _unavailable(self, card):
+        self.failed_until[card] = self.now() + FAILURE_COOLDOWN
+        return DemoError(UNAVAILABLE[card])
 
     def _clean_old_files(self):
         cutoff = time.time() - KEEP_SECONDS

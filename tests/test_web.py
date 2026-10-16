@@ -113,3 +113,12 @@ def test_works_when_mounted_under_prefix(tmp_path):
     assert "/data-demo/static/style.css" in html
     data = site.post("/data-demo/books", data={"pages": "1"}).get_json()
     assert data["download"].startswith("/data-demo/download/")
+
+
+def test_scrape_crash_is_not_a_500(tmp_path):
+    def crash(pages, delay):
+        raise RuntimeError("site layout changed")
+
+    response = make_client(tmp_path, scrape=crash).post("/books", data={"pages": "1"})
+    assert response.status_code == 503
+    assert "sample" in response.get_json()

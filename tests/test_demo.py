@@ -132,3 +132,60 @@ def test_rate_limiter():
     assert limiter.check("5.6.7.8:books") == 0         # other visitor is separate
     clock.value = 131.0
     assert limiter.check("1.2.3.4:books") == 0
+
+
+from datetime import timedelta
+
+
+def test_scrape_crash_becomes_friendly_error(tmp_path):
+    def crash(pages, delay):
+        raise RuntimeError("site layout changed")
+
+    demo = DemoRunner(tmp_path, tmp_path, scrape=crash)
+    with pytest.raises(DemoError, match="sample"):
+        demo.books(1)
+
+
+def test_failure_is_remembered_for_a_few_minutes(tmp_path):
+    calls = []
+    clock = Clock(datetime(2026, 10, 15, 9, 30))
+
+    def down(pages, delay):
+        calls.append(pages)
+        return []
+
+    demo = DemoRunner(tmp_path, tmp_path, scrape=down, now=clock)
+    for _ in range(3):
+        with pytest.raises(DemoError):
+            demo.books(1)
+    assert calls == [1]                            # no new attempt while the site is down
+    clock.value += timedelta(minutes=6)
+    with pytest.raises(DemoError):
+        demo.books(1)
+    assert calls == [1, 1]
+
+
+def test_invoice_failure_is_remembered(tmp_path):
+    calls = []
+
+    def broken(path):
+        calls.append(path)
+        raise RuntimeError("Gemini down")
+
+    demo = DemoRunner(tmp_path, tmp_path, extract=broken,
+                      now=lambda: datetime(2026, 10, 15, 9, 30))
+    for key in ("brightline", "greenleaf"):
+        with pytest.raises(DemoError):
+            demo.invoice(key)
+    assert len(calls) == 1
+
+
+def test_live_runs_are_capped_per_hour(runner):
+    demo, scrapes, _, _ = runner
+    demo.max_live_runs = 2
+    demo.books(1)
+    demo.books(2)
+    with pytest.raises(DemoError, match="busy"):
+        demo.books(3)
+    demo.books(1)                                  # cached results are always fine
+    assert scrapes == [1, 2]
